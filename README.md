@@ -14,6 +14,9 @@ There was a weird quirk I found when running this off a floppy disk on real
 hardware, which I never actually resolved. This is the purpose of the
 `REAL_MACHINE` flag, which just disables disk use.
 
+There is also a `SPECIAL` flag which adds some extra messages, though I can't
+remember why.
+
 Mines was written in October/November 2023.
 
 ## License
