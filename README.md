@@ -14,6 +14,8 @@ There was a weird quirk I found when running this off a floppy disk on real
 hardware, which I never actually resolved. This is the purpose of the
 `REAL_MACHINE` flag, which just disables disk use.
 
+Mines was written in October/November 2023.
+
 ## License
 
 mines is licensed under th GNU General Public License v3. See LICENSE for
