@@ -1,22 +1,25 @@
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
 // #define DEBUG
 
-#define WIDTH 16
-#define HEIGHT 16
-#define MINES 40
+static int WIDTH = 8;
+static int HEIGHT = 8;
+static int MINES = 10;
+static unsigned long START = 0;
 
 #define FFLAG 16
 #define FREVEAL 32
 #define FMINE 64
 
 #define CUROFF_H(x) (1 + (x))
-#define CUROFF_V(y) (1 + (y))
+#define CUROFF_V(y) (2 + (y))
 
 typedef unsigned char cell;
 
@@ -176,6 +179,8 @@ drawCell(char c)
 void
 drawBoard(cell board[HEIGHT][WIDTH])
 {
+    printf("\033[%u;%uH", CUROFF_V(0), CUROFF_H(0));
+
     for (int y = 0; y < HEIGHT; ++y) {
         for (int x = 0; x < WIDTH; ++x) {
             short n = board[y][x] & 0xF;
@@ -198,9 +203,32 @@ drawBoard(cell board[HEIGHT][WIDTH])
 }
 
 void
-draw(cell board[HEIGHT][WIDTH], int sel_x, int sel_y)
+clearMessage(int sel_x, int sel_y)
+{
+    printf("\033[%u;%uH\033[2K\033[%u;%uH", CUROFF_V(HEIGHT), 1,
+           CUROFF_V(sel_y), CUROFF_H(sel_x));
+}
+
+void
+drawStatusLine()
 {
     printf("\033[H");
+    printf("%lu", time(NULL) - START);
+}
+
+void
+drawMessage(const char *msg, int sel_x, int sel_y)
+{
+    int len = strlen(msg);
+    printf("\033[%u;%uH", CUROFF_V(HEIGHT), CUROFF_H((WIDTH - len) / 2));
+    printf("%s", msg);
+    printf("\033[%u;%uH", CUROFF_V(sel_y), CUROFF_H(sel_x));
+}
+
+void
+draw(cell board[HEIGHT][WIDTH], int sel_x, int sel_y)
+{
+    drawStatusLine();
     drawBoard(board);
 
 #ifdef DEBUG
@@ -229,28 +257,58 @@ setupTerm(bool enable)
         new = old;
         new.c_lflag &= ~(ICANON | ECHO);
         tcsetattr(STDIN_FILENO, TCSANOW, &new);
+        printf("\033[2J");
         enabled = true;
     } else if (!enable && enabled) {
+        printf("\033[m");
         tcsetattr(STDIN_FILENO, TCSANOW, &old);
         enabled = false;
     }
 }
 
+void
+signal_callback(int signum)
+{
+    printf("\033[%u;%uH", CUROFF_V(HEIGHT), 1);
+    setupTerm(false);
+    exit(signum);
+}
+
 int
 main(int argc, char *argv[])
 {
-    srand(time(NULL));
+    if (argc > 1) {
+        char *s = argv[1];
+        unsigned short x = 0;
+        char *dim[3] = {s, NULL, NULL};
+        while (*s) {
+            if (*s == 'X' || *s == 'x') {
+                x++;
+                *s = '\0';
 
-    bool exit = false;
-    int code = 0;
-    bool boardCreated = false;
+                if (x < 3)
+                    dim[x] = s + 1;
+            }
+            s++;
+        }
 
-    int sel_x = 0, sel_y = 0, left = WIDTH * HEIGHT - MINES, r;
+        if (*dim[0])
+            WIDTH = abs(atoi(dim[0]));
+        if (*dim[1])
+            HEIGHT = abs(atoi(dim[1]));
+        if (*dim[2])
+            MINES = abs(atoi(dim[2]));
+    }
+
+    srand((START = time(NULL)));
+    signal(SIGINT, signal_callback);
+
+    bool exit = false, boardCreated = false;
+    int status = 0, sel_x = 0, sel_y = 0, left = WIDTH * HEIGHT - MINES, r;
 
     cell board[HEIGHT][WIDTH];
     initBoard(board);
 
-    printf("\033[H\033[2J");
     setupTerm(true);
 
     while (!exit) {
@@ -274,6 +332,9 @@ main(int argc, char *argv[])
                 dx = 1;
                 dy = -1;
                 break;
+            case 'K':
+                dy = -sel_y;
+                break;
 
             // w, e
             case 'h':
@@ -281,6 +342,12 @@ main(int argc, char *argv[])
                 break;
             case 'l':
                 dx = 1;
+                break;
+            case 'H':
+                dx = -sel_x;
+                break;
+            case 'L':
+                dx = WIDTH - sel_x - 1;
                 break;
 
             // sw, s, se
@@ -294,6 +361,9 @@ main(int argc, char *argv[])
             case 'n':
                 dx = 1;
                 dy = 1;
+                break;
+            case 'J':
+                dy = HEIGHT - sel_y - 1;
                 break;
 
             // arrow keys
@@ -325,7 +395,7 @@ main(int argc, char *argv[])
                 }
                 if ((r = revealCell(board, sel_x, sel_y, true)) == -1) {
                     exit = true;
-                    code = 1;
+                    status = 1;
                 }
                 left -= r;
                 break;
@@ -338,7 +408,13 @@ main(int argc, char *argv[])
 
             // quit
             case 'q':
-                exit = true;
+                drawMessage("QUIT (y/N)", sel_x, sel_y);
+                c = getchar();
+                clearMessage(sel_x, sel_y);
+                if (c == 'y' || c == 'Y') {
+                    exit = true;
+                    status = 2;
+                }
                 break;
         }
 
@@ -355,9 +431,19 @@ main(int argc, char *argv[])
 
     revealAll(board);
     draw(board, sel_x, sel_y);
-    printf("\033[%u;%uH", CUROFF_V(HEIGHT), 1);
+
+    switch (status) {
+        case 0:
+            drawMessage("WIN", 0, HEIGHT + 1);
+            break;
+        case 1:
+            drawMessage("LOSE", 0, HEIGHT + 1);
+            break;
+        case 2:
+            printf("\033[%u;%uH", CUROFF_V(HEIGHT), 1);
+            break;
+    }
 
     setupTerm(false);
-    printf("\033[m");
-    return code;
+    return 0;
 }
